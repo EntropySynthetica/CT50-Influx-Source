@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -32,6 +34,12 @@ type thermo_stats struct {
 	TTypePost int `json:"t_type_post"`
 }
 
+type SplunkEvent struct {
+	Event  string `json:"event"`
+	Host   string `json:"host"`
+	Source string `json:"source"`
+}
+
 func main() {
 	envErr := godotenv.Load(".env")
 	if envErr != nil {
@@ -43,6 +51,8 @@ func main() {
 	org := os.Getenv("ORG")
 	bucket := os.Getenv("BUCKET")
 	ct50IP := os.Getenv("CT50IP")
+	splunkKey := os.Getenv("SPLUNKKEY")
+	splunkURL := os.Getenv("SPLUNKURL")
 
 	// Poll the CT50
 	poll_url := "http://" + ct50IP + "/tstat"
@@ -90,4 +100,27 @@ func main() {
 
 	// Ensures background processes finishes
 	client.Close()
+
+	// Send Data to Splunk
+	var splunkEvent SplunkEvent
+
+	splunkEvent.Event = string(response_data)
+	splunkEvent.Host = ct50IP
+	splunkEvent.Source = "ct50"
+
+	payload, _ := json.Marshal(splunkEvent)
+
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	splunkReq, _ := http.NewRequest("POST", splunkURL, bytes.NewBuffer(payload))
+	splunkReq.Header.Add("Authorization", "Splunk "+splunkKey)
+	splunkReq.Header.Add("Content-Type", "application/json")
+
+	splunkResp, splunkErr := http.DefaultClient.Do(splunkReq)
+
+	if splunkErr != nil {
+		log.Fatalln(splunkErr)
+	}
+
+	defer splunkResp.Body.Close()
+
 }
